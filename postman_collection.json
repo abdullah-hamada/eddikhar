@@ -1,0 +1,954 @@
+{
+	"info": {
+		"_postman_id": "8b51d8b7-6fa8-472e-8334-118cf9456578",
+		"name": "Employee Wallet & Ledger System",
+		"description": "Employee Wallet & Payroll/Bank take-home API collection.\n\n## Reviewer quick start\n1. Import this collection AND `postman_environment.json` (select **Eddikhar Local** environment).\n2. Run migrations: `php artisan migrate --seed`\n3. Terminal A: `php artisan serve` (default http://127.0.0.1:8000)\n4. Terminal B: `php artisan queue:work` (required for payroll + bank jobs)\n5. Run folder **1. Happy Path (run in order)** top to bottom — scripts auto-save `employee_id`, `wallet_id`, `external_reference`.\n6. For bank callback: after **Initiate Withdrawal**, ensure queue worker processed the job, then run **Refresh Withdrawal (after queue)** before **Bank Callback Success**.\n\nAmounts are in minor units (cents): 500000 = $5,000.00.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "1. Happy Path (run in order)",
+			"description": "Run these requests sequentially. Post-response scripts populate collection variables automatically.",
+			"item": [
+				{
+					"name": "01 - Health Check",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Health OK', function () {",
+									"    pm.response.to.have.status(200);",
+									"    pm.expect(pm.response.json().status).to.eql('healthy');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Accept", "value": "application/json", "type": "text"}],
+						"url": {"raw": "{{base_url}}/api/health", "host": ["{{base_url}}"], "path": ["api", "health"]}
+					},
+					"response": []
+				},
+				{
+					"name": "02 - Create Employee",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Employee created (201)', function () {",
+									"    pm.expect(pm.response.code, 'expected 201 — if 422, an employee with this email or external_id already exists; re-send to generate fresh values').to.eql(201);",
+									"});",
+									"let data = null;",
+									"try { data = pm.response.json().data; } catch (e) {}",
+									"if (data && data.id) {",
+									"    pm.collectionVariables.set('employee_id', data.id);",
+									"    if (data.external_id) pm.collectionVariables.set('employee_external_id', data.external_id);",
+									"    console.log('employee_id saved:', data.id, 'external_id:', data.external_id);",
+									"} else {",
+									"    console.error('Employee creation failed — clear employee_id so later steps fail fast.');",
+									"    pm.collectionVariables.set('employee_id', '');",
+									"    pm.collectionVariables.set('employee_external_id', '');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"first_name\": \"Reviewer\",\n    \"last_name\": \"Demo\",\n    \"email\": \"reviewer-{{$timestamp}}-{{$randomInt}}@example.com\",\n    \"external_id\": \"PAYROLL-EMP-POSTMAN-{{$timestamp}}-{{$randomInt}}\",\n    \"metadata\": {\"department\": \"Engineering\", \"source\": \"postman\"}\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/employees", "host": ["{{base_url}}"], "path": ["api", "employees"]}
+					},
+					"response": []
+				},
+				{
+					"name": "03 - Create Salary Wallet",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"const eid = pm.collectionVariables.get('employee_id');",
+									"if (!eid) {",
+									"    throw new Error('employee_id is empty. Run step 02 (Create Employee) first.');",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Wallet created (201)', function () { pm.expect(pm.response.code).to.eql(201); });",
+									"let data = null;",
+									"try { data = pm.response.json().data; } catch (e) {}",
+									"if (data && data.id) {",
+									"    pm.collectionVariables.set('wallet_id', data.id);",
+									"    pm.collectionVariables.set('from_wallet_id', data.id);",
+									"    console.log('wallet_id saved:', data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {"mode": "raw", "raw": "{\n    \"type\": \"salary\",\n    \"currency\": \"USD\"\n}"},
+						"url": {"raw": "{{base_url}}/api/employees/{{employee_id}}/wallets", "host": ["{{base_url}}"], "path": ["api", "employees", "{{employee_id}}", "wallets"]}
+					},
+					"response": []
+				},
+				{
+					"name": "04 - Credit Wallet ($5,000)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('wallet_id')) {",
+									"    throw new Error('wallet_id is empty. Run step 03 (Create Salary Wallet) first.');",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Credit applied (201)', function () { pm.expect(pm.response.code).to.eql(201); });"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 500000,\n    \"idempotency_key\": \"{{$guid}}\",\n    \"description\": \"Initial funding for demo\",\n    \"type\": \"deposit\"\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/wallets/{{wallet_id}}/credit", "host": ["{{base_url}}"], "path": ["api", "wallets", "{{wallet_id}}", "credit"]}
+					},
+					"response": []
+				},
+				{
+					"name": "05 - Initiate Withdrawal ($300 hold)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('wallet_id')) {",
+									"    throw new Error('wallet_id is empty. Run step 03 first.');",
+									"}",
+									"pm.collectionVariables.set('withdraw_idempotency_key', 'postman-withdraw-' + Date.now());"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Withdrawal initiated (201)', function () { pm.expect(pm.response.code).to.eql(201); });",
+									"let data = null;",
+									"try { data = pm.response.json().data; } catch (e) {}",
+									"if (data) {",
+									"    if (data.id) pm.collectionVariables.set('bank_payment_id', data.id);",
+									"    if (data.external_reference) pm.collectionVariables.set('external_reference', data.external_reference);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 30000,\n    \"idempotency_key\": \"{{withdraw_idempotency_key}}\",\n    \"metadata\": {\"device\": \"postman\"}\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/wallets/{{wallet_id}}/withdraw", "host": ["{{base_url}}"], "path": ["api", "wallets", "{{wallet_id}}", "withdraw"]},
+						"description": "Creates bank payment in `initiated` and dispatches SendBankPayment. Requires `php artisan queue:work` running."
+					},
+					"response": []
+				},
+				{
+					"name": "06 - Refresh Withdrawal (after queue:work)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('wallet_id')) {",
+									"    throw new Error('wallet_id is empty. Run step 03 first.');",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Withdrawal idempotent refresh (201)', function () { pm.expect(pm.response.code).to.eql(201); });",
+									"let data = null;",
+									"try { data = pm.response.json().data; } catch (e) {}",
+									"if (data && data.external_reference) {",
+									"    pm.collectionVariables.set('external_reference', data.external_reference);",
+									"    console.log('external_reference saved:', data.external_reference);",
+									"} else {",
+									"    console.warn('external_reference still null — run queue:work then re-send this request');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 30000,\n    \"idempotency_key\": \"{{withdraw_idempotency_key}}\"\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/wallets/{{wallet_id}}/withdraw", "host": ["{{base_url}}"], "path": ["api", "wallets", "{{wallet_id}}", "withdraw"]},
+						"description": "Re-send same idempotency key after queue worker runs to read `external_reference` into collection variable for the bank callback."
+					},
+					"response": []
+				},
+				{
+					"name": "07 - Bank Callback Success",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('external_reference')) {",
+									"    throw new Error('external_reference is empty. Make sure php artisan queue:work is running, then re-send step 06 to capture it.');",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Callback processed (200)', function () { pm.expect(pm.response.code).to.eql(200); });"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"external_reference\": \"{{external_reference}}\",\n    \"status\": \"success\"\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/bank/callback", "host": ["{{base_url}}"], "path": ["api", "bank", "callback"]}
+					},
+					"response": []
+				},
+				{
+					"name": "08 - Payroll Webhook (salary run for step 02 employee)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('employee_external_id')) {",
+									"    throw new Error('employee_external_id is empty. Run step 02 (Create Employee) first.');",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Payroll accepted (202)', function () { pm.expect(pm.response.code).to.eql(202); });"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"event_id\": \"PAYROLL-EVT-{{$guid}}\",\n    \"event_type\": \"salary_run\",\n    \"payload\": {\n        \"employee_id\": \"{{employee_external_id}}\",\n        \"amount\": 450000,\n        \"currency\": \"USD\",\n        \"salary_period\": \"May 2026\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/payroll/webhook", "host": ["{{base_url}}"], "path": ["api", "payroll", "webhook"]},
+						"description": "Triggers async salary credit on the employee created in step 02. Queue worker must process ProcessPayrollEvent."
+					},
+					"response": []
+				},
+				{
+					"name": "09 - Transaction History",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('wallet_id')) {",
+									"    throw new Error('wallet_id is empty. Run step 03 first.');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [{"key": "Accept", "value": "application/json", "type": "text"}],
+						"url": {"raw": "{{base_url}}/api/wallets/{{wallet_id}}/transactions?per_page=20", "host": ["{{base_url}}"], "path": ["api", "wallets", "{{wallet_id}}", "transactions"], "query": [{"key": "per_page", "value": "20"}]}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "System Health",
+			"item": [
+				{
+					"name": "Get System Health & Ledger Integrity Status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"health"
+							]
+						},
+						"description": "Performs a global database availability check, a global ledger balance sanity check, and scans for any individual wallet balance corruption against ledger history."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Employees Domain",
+			"item": [
+				{
+					"name": "Create Employee",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"first_name\": \"Abdullah\",\n    \"last_name\": \"Hamadeh\",\n    \"email\": \"abdullah.hamadeh@example.com\",\n    \"external_id\": \"PAYROLL-EMP-DEMO-001\",\n    \"metadata\": {\n        \"department\": \"Engineering\",\n        \"role\": \"Distributed Systems Architect\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/employees",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"employees"
+							]
+						},
+						"description": "Registers a new employee. Generates a unique UUID v4 as primary identifier."
+					},
+					"response": []
+				},
+				{
+					"name": "List Employees",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/employees?status=active&search=Abdullah&per_page=15",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"employees"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "active",
+									"description": "Filter by active, inactive, or terminated"
+								},
+								{
+									"key": "search",
+									"value": "Abdullah",
+									"description": "Search by name or email"
+								},
+								{
+									"key": "per_page",
+									"value": "15"
+								}
+							]
+						},
+						"description": "List employees with search, pagination, and status filters."
+					},
+					"response": []
+				},
+				{
+					"name": "Show Employee Details",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/employees/{{employee_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"employees",
+								"{{employee_id}}"
+							]
+						},
+						"description": "Retrieve details of a single employee including their active wallets."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Wallets Domain",
+			"item": [
+				{
+					"name": "Create Wallet for Employee",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"type\": \"salary\",\n    \"currency\": \"USD\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/employees/{{employee_id}}/wallets",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"employees",
+								"{{employee_id}}",
+								"wallets"
+							]
+						},
+						"description": "Creates a wallet of type 'salary', 'savings', or 'bonus' for an employee. Each employee is restricted to one wallet per type-currency combination."
+					},
+					"response": []
+				},
+				{
+					"name": "List Wallets for Employee",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/employees/{{employee_id}}/wallets",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"employees",
+								"{{employee_id}}",
+								"wallets"
+							]
+						},
+						"description": "Get all wallets associated with a specific employee."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Money Movements (Ledger)",
+			"item": [
+				{
+					"name": "Credit Wallet (Deposit)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 500000,\n    \"idempotency_key\": \"{{$guid}}\",\n    \"description\": \"Wire transfer credit from Bank partner\",\n    \"metadata\": {\n        \"channel\": \"ACH\",\n        \"remitter\": \"Partner Corp\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/wallets/{{wallet_id}}/credit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"wallets",
+								"{{wallet_id}}",
+								"credit"
+							]
+						},
+						"description": "Credits funds directly to a wallet. Amount is specified in minor units (e.g. 500000 = $5,000.00). The endpoint enforces absolute idempotency using the Idempotency-Key/guid."
+					},
+					"response": []
+				},
+				{
+					"name": "Debit Wallet (Withdrawal)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 15000,\n    \"idempotency_key\": \"{{$guid}}\",\n    \"description\": \"Direct debit payment for gym subscription\",\n    \"metadata\": {\n        \"merchant\": \"FitLife Fitness\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/wallets/{{wallet_id}}/debit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"wallets",
+								"{{wallet_id}}",
+								"debit"
+							]
+						},
+						"description": "Debits funds from a wallet. Verifies that available balance (balance - held_balance) is sufficient. Enforces idempotency via the idempotency_key."
+					},
+					"response": []
+				},
+				{
+					"name": "Transfer Between Wallets",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"from_wallet_id\": \"{{from_wallet_id}}\",\n    \"to_wallet_id\": \"{{to_wallet_id}}\",\n    \"amount\": 25000,\n    \"idempotency_key\": \"{{$guid}}\",\n    \"description\": \"Monthly savings transfer\",\n    \"metadata\": {\n        \"transfer_type\": \"internal_savings\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/wallets/transfer",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"wallets",
+								"transfer"
+							]
+						},
+						"description": "Executes an atomic double-entry transfer (debiting the source wallet and crediting the destination wallet) inside a database transaction. Both wallets must share the same currency. Row-locking is strictly sorted by UUID to prevent deadlocks."
+					},
+					"response": []
+				},
+				{
+					"name": "Initiate Outbound Withdrawal (Bank Hold)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 30000,\n    \"idempotency_key\": \"{{$guid}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/wallets/{{wallet_id}}/withdraw",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"wallets",
+								"{{wallet_id}}",
+								"withdraw"
+							]
+						},
+						"description": "Initiates an outbound bank payment. Immediately holds the requested amount in `held_balance` (pessimistic lock) and dispatches an async job to trigger the payment process through the Bank Simulator."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Wallet Transaction History",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/wallets/{{wallet_id}}/transactions?type=credit&per_page=15&page=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"wallets",
+								"{{wallet_id}}",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "type",
+									"value": "credit",
+									"description": "Filter by credit or debit (optional)"
+								},
+								{
+									"key": "reference_type",
+									"value": "payroll",
+									"description": "Filter by payroll, bank, transfer, manual (optional)",
+									"disabled": true
+								},
+								{
+									"key": "from",
+									"value": "2026-01-01T00:00:00Z",
+									"description": "Filter by start date (optional)",
+									"disabled": true
+								},
+								{
+									"key": "to",
+									"value": "2026-12-31T23:59:59Z",
+									"description": "Filter by end date (optional)",
+									"disabled": true
+								},
+								{
+									"key": "per_page",
+									"value": "15"
+								},
+								{
+									"key": "page",
+									"value": "1"
+								}
+							]
+						},
+						"description": "Retrieves the complete paginated and index-optimized transaction history/ledger entries for a wallet."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Third-Party Integrations",
+			"item": [
+				{
+					"name": "Payroll - Employee Onboarded",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"event_id\": \"PAYROLL-ONBOARD-{{$guid}}\",\n    \"event_type\": \"employee_onboarded\",\n    \"payload\": {\n        \"employee_id\": \"PAYROLL-EMP-NEW-{{$guid}}\",\n        \"first_name\": \"Jane\",\n        \"last_name\": \"Reviewer\",\n        \"email\": \"jane-{{$timestamp}}@example.com\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/payroll/webhook", "host": ["{{base_url}}"], "path": ["api", "payroll", "webhook"]}
+					},
+					"response": []
+				},
+				{
+					"name": "Payroll - Employee Status Changed",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"event_id\": \"PAYROLL-STATUS-{{$guid}}\",\n    \"event_type\": \"employee_status_changed\",\n    \"payload\": {\n        \"employee_id\": \"PAYROLL-EMP-DEMO-001\",\n        \"status\": \"inactive\"\n    }\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/payroll/webhook", "host": ["{{base_url}}"], "path": ["api", "payroll", "webhook"]}
+					},
+					"response": []
+				},
+				{
+					"name": "Payroll - Salary Run",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"event_id\": \"PAYROLL-EVT-{{$guid}}\",\n    \"event_type\": \"salary_run\",\n    \"payload\": {\n        \"employee_id\": \"PAYROLL-EMP-DEMO-001\",\n        \"amount\": 450000,\n        \"currency\": \"USD\",\n        \"salary_period\": \"May 2026\"\n    }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/payroll/webhook",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"payroll",
+								"webhook"
+							]
+						},
+						"description": "Ingests inbound events from HR/Payroll system. Events are saved raw and dispatched to an async worker queue for consistent processing (e.g. employee creation, onboarding, salary runs)."
+					},
+					"response": []
+				},
+				{
+					"name": "Bank Callback - Success",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"external_reference\": \"{{external_reference}}\",\n    \"status\": \"success\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/bank/callback",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"bank",
+								"callback"
+							]
+						},
+						"description": "Simulates bank payment gateway callback. Receives confirmation of payment success or failure, triggers wallet debit-release on success, or hold-release on failure, moving the outbound payment state machine to its final state."
+					},
+					"response": []
+				},
+				{
+					"name": "Bank Callback - Failed",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Content-Type", "value": "application/json", "type": "text"},
+							{"key": "Accept", "value": "application/json", "type": "text"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"external_reference\": \"{{external_reference}}\",\n    \"status\": \"failed\",\n    \"reason\": \"Account blocked\"\n}"
+						},
+						"url": {"raw": "{{base_url}}/api/bank/callback", "host": ["{{base_url}}"], "path": ["api", "bank", "callback"]}
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://127.0.0.1:8000",
+			"type": "string"
+		},
+		{
+			"key": "employee_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "wallet_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "from_wallet_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "to_wallet_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "external_reference",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "withdraw_idempotency_key",
+			"value": "postman-withdraw-demo-001",
+			"type": "string"
+		},
+		{
+			"key": "bank_payment_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "employee_external_id",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
