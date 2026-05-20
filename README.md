@@ -4,6 +4,8 @@ A production-grade, highly consistent, and idempotent FinTech Ledger & Employee 
 
 This system represents a core banking and financial ledger engine, strictly designed to solve the challenges of concurrency control, strong consistency, retry-safe idempotency, auditability, and resilient distributed integrations.
 
+![Dashboard](docs/screenshots/dashboard.png)
+
 ---
 
 ## 🏗️ Architectural Overview
@@ -224,6 +226,26 @@ The dashboard is a single-page React application (Vite + Tailwind v4) served by 
 * **Bank payments** — low-level audit log with idempotency keys and external references.
 * **Payroll events** — webhook delivery status, retry attempts, and error messages.
 * **System health** — DB and ledger integrity probe, with a wallet-level mismatch breakdown when something drifts.
+
+#### Screenshot gallery
+
+| Wallet detail | System health |
+|---|---|
+| ![Wallet detail](docs/screenshots/wallet-detail.png) | ![System health](docs/screenshots/health.png) |
+
+| Transactions | Employees |
+|---|---|
+| ![Transactions](docs/screenshots/transactions.png) | ![Employees](docs/screenshots/employees.png) |
+
+| Wallets | Withdrawals |
+|---|---|
+| ![Wallets](docs/screenshots/wallets.png) | ![Withdrawals](docs/screenshots/withdrawals.png) |
+
+| Payroll events | Bank payments |
+|---|---|
+| ![Payroll events](docs/screenshots/payroll-events.png) | ![Bank payments](docs/screenshots/bank-payments.png) |
+
+> Re-capture any time with `npm run screenshots` (requires `php artisan serve` on `:8000` and a seeded database). Output is written to `docs/screenshots/`.
 
 **Create the database (MySQL):** in phpMyAdmin, Laragon MySQL console, or CLI:
 
