@@ -201,13 +201,29 @@ All primary keys use globally unique `UUID v4` to prevent ID enumeration attacks
 | Step | Command / action |
 |------|------------------|
 | 1 | Create an empty MySQL database (see below) |
-| 2 | `composer install` |
+| 2 | `composer install && npm install` |
 | 3 | `cp .env.example .env` then `php artisan key:generate` |
 | 4 | `php artisan migrate --seed` — prints demo UUIDs (Alice salary wallet, stuck payment, etc.) |
-| 5 | **Terminal A:** `php artisan serve` → API at `http://127.0.0.1:8000` |
-| 6 | **Terminal B:** `php artisan queue:work` — required for payroll webhooks and bank withdrawals |
-| 7 | **Terminal C (optional):** `php artisan schedule:work` — auto-reconciles stuck bank payments |
-| 8 | Import `postman_collection.json` + `postman_environment.json`, run folder **1. Happy Path (run in order)** |
+| 5 | **Terminal A:** `php artisan serve` → app at `http://127.0.0.1:8000` |
+| 6 | **Terminal B:** `npm run dev` → Vite dev server (HMR) for the React dashboard |
+| 7 | **Terminal C:** `php artisan queue:work` — required for payroll webhooks and bank withdrawals |
+| 8 | **Terminal D (optional):** `php artisan schedule:work` — auto-reconciles stuck bank payments |
+| 9 | Visit `http://127.0.0.1:8000` for the operations dashboard, or import the Postman collection for raw API runs |
+
+For a production-style build (no dev server), run `npm run build` once — Laravel will serve the compiled assets from `public/build`.
+
+### The operations dashboard
+
+The dashboard is a single-page React application (Vite + Tailwind v4) served by Laravel. It is intentionally minimal and Linear/Stripe-flavoured:
+
+* **Dashboard** — financial overview, ledger integrity, recent activity, payroll & bank pipeline status.
+* **Employees** — searchable, filterable employee directory with detail pages.
+* **Wallets** — balances (available / held / total) with full ledger history and an inline withdraw action.
+* **Transactions** — global immutable ledger feed with type and source filters.
+* **Withdrawals** — employee-centric view of withdrawal lifecycle.
+* **Bank payments** — low-level audit log with idempotency keys and external references.
+* **Payroll events** — webhook delivery status, retry attempts, and error messages.
+* **System health** — DB and ledger integrity probe, with a wallet-level mismatch breakdown when something drifts.
 
 **Create the database (MySQL):** in phpMyAdmin, Laragon MySQL console, or CLI:
 
