@@ -175,6 +175,18 @@ All primary keys use globally unique `UUID v4` to prevent ID enumeration attacks
 
 ---
 
+## 🔮 Future Improvements (What I would build with more time)
+
+While the system is robust for its current scope, operating at massive scale would require these evolutionary steps:
+
+1. **Distributed Locking (Redis)**: Currently, row-level database locks (`lockForUpdate()`) prevent concurrency issues safely. At extremely high throughput, pushing lock acquisition to Redis (via `Illuminate\Cache\RedisLock`) would reduce database connection pooling exhaustion and latency.
+2. **Event Sourcing & CQRS**: The current system uses an append-only ledger for writes, but still queries the same DB for reads. Extracting read-models (e.g., wallet balances, transaction feeds) into a NoSQL store (like DynamoDB or MongoDB) using CQRS would drastically improve read scalability.
+3. **Multi-Currency (FX) Module**: True cross-currency transfers require an exchange rate system. I would build a dedicated FX service that locks rate quotes with a timestamp, recording 3-way ledger entries (debit Source, credit Clearing Wallet, debit Clearing Wallet, credit Destination) to handle floating-point residue safely.
+4. **Idempotency Key Garbage Collection**: Idempotency keys are kept forever. With more time, I'd implement a pruning strategy or move idempotency tracking to a fast key-value store (Redis) with a 24-48 hour TTL to prevent unbounded table growth, since retries generally only occur within a short temporal window.
+5. **Partial Hold Release**: Currently, if a bank payment partially fails or settles for a different amount (e.g., bank fee deducted), the hold release is all-or-nothing. Building a partial-release flow would handle real-world settlement discrepancies.
+
+---
+
 ## ⚡ API Endpoints reference
 
 | Category | Method | Path | Description |
