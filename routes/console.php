@@ -11,3 +11,9 @@ Artisan::command('inspire', function () {
 Schedule::command('ledger:reconcile-payments')
     ->everyFifteenMinutes()
     ->withoutOverlapping(10);
+
+// Auto-fix minor ledger drift every night
+Schedule::command('ledger:reconcile-balances --fix')
+    ->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->onOneServer();
