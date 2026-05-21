@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Builders\RestrictedUpdateBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -47,6 +48,19 @@ class LedgerTransaction extends Model
         static::deleting(function (LedgerTransaction $transaction) {
             throw new \DomainException('Ledger transaction is immutable and cannot be deleted.');
         });
+    }
+
+    /**
+     * Use RestrictedUpdateBuilder to block mass delete/truncate and restrict
+     * mass updates to only status/updated_at columns.
+     *
+     * Eloquent's query()->update() and query()->delete() bypass model events,
+     * so we override the builder to catch those paths at the query level.
+     * DB-level triggers provide a final safety net.
+     */
+    public function newEloquentBuilder($query): RestrictedUpdateBuilder
+    {
+        return new RestrictedUpdateBuilder($query);
     }
 
     public function entries(): HasMany

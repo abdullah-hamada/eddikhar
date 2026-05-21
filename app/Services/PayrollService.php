@@ -22,6 +22,9 @@ class PayrollService
 
     /**
      * Process a payroll event.
+     *
+     * Uses state machine transitions on PayrollEvent model:
+     * received → processing → processed | failed
      */
     public function processEvent(PayrollEvent $event): void
     {
@@ -37,10 +40,9 @@ class PayrollService
                 return;
             }
 
-            $lockedEvent->update([
-                'status' => 'processing',
-                'attempts' => $lockedEvent->attempts + 1,
-            ]);
+            $lockedEvent->transitionTo('processing');
+            $lockedEvent->attempts = $lockedEvent->attempts + 1;
+            $lockedEvent->save();
 
             try {
                 $payload = $lockedEvent->payload;
@@ -59,16 +61,14 @@ class PayrollService
                         throw new \InvalidArgumentException("Unknown event type: {$lockedEvent->event_type}");
                 }
 
-                $lockedEvent->update([
-                    'status' => 'processed',
-                    'processed_at' => now(),
-                    'error_message' => null,
-                ]);
+                $lockedEvent->transitionTo('processed');
+                $lockedEvent->processed_at = now();
+                $lockedEvent->error_message = null;
+                $lockedEvent->save();
             } catch (\Throwable $e) {
-                $lockedEvent->update([
-                    'status' => 'failed',
-                    'error_message' => $e->getMessage() . "\n" . $e->getTraceAsString(),
-                ]);
+                $lockedEvent->transitionTo('failed');
+                $lockedEvent->error_message = $e->getMessage() . "\n" . $e->getTraceAsString();
+                $lockedEvent->save();
                 throw $e;
             }
         });

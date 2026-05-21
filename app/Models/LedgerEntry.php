@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\Builders\ImmutableBuilder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -46,6 +47,18 @@ class LedgerEntry extends Model
         static::deleting(function (LedgerEntry $entry) {
             throw new \DomainException('Ledger entry is immutable and cannot be deleted.');
         });
+    }
+
+    /**
+     * Use ImmutableBuilder to block mass update/delete/truncate operations.
+     *
+     * Eloquent's query()->update() and query()->delete() bypass model events,
+     * so we override the builder to catch those paths at the query level.
+     * DB-level triggers provide a final safety net.
+     */
+    public function newEloquentBuilder($query): ImmutableBuilder
+    {
+        return new ImmutableBuilder($query);
     }
 
     public function transaction(): BelongsTo

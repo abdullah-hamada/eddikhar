@@ -31,16 +31,21 @@ class ImmutabilityAndReconciliationTest extends TestCase
     }
 
     /**
-     * Test LedgerEntry updates throw DomainException.
+     * Test LedgerEntry mass updates are blocked by ImmutableBuilder.
+     *
+     * The ImmutableBuilder catches mass update attempts at the query builder level
+     * (before the query reaches the database), providing defense-in-depth alongside
+     * the DB-level triggers.
      */
-    public function test_mass_update_on_ledger_entries_is_rejected_by_database(): void
+    public function test_mass_update_on_ledger_entries_is_rejected_by_builder(): void
     {
         $employee = Employee::factory()->create();
         $wallet = Wallet::factory()->create(['employee_id' => $employee->id]);
 
         $this->ledgerService->credit($wallet, 1000, (string) Str::uuid());
 
-        $this->expectException(QueryException::class);
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('immutable');
 
         LedgerEntry::query()->update(['amount' => 9999]);
     }

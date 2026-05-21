@@ -56,14 +56,19 @@ The system sits between an external simulated HR/Payroll provider, a bank paymen
   * **Pessimistic Locking**: Every mutation locks the wallet row in the database using `SELECT ... FOR UPDATE` before executing validations or checks. This forces concurrent modifications to queue up sequentially.
   * **Strict Lock Ordering**: When transferring money between two wallets, acquiring locks in different orders (Transaction 1 locks A then B, while Transaction 2 locks B then A) causes database deadlocks. The system resolves this by **sorting the wallet UUIDs alphabetically and acquiring locks in strict ascending order**, mathematically eliminating deadlock scenarios.
 
-### 4. End-to-End Idempotency
-* **The Problem**: Network drops or client retries can result in the same request (e.g., credit $100) being processed twice.
+### 4. End-to-End Idempotency & Race Condition Prevention
+* **The Problem**: Network drops or client retries can result in the same request (e.g., credit $100) being processed twice. Checking for existence before a transaction creates a Time-of-Check-Time-of-Use (TOCTOU) race condition.
 * **The Solution**:
   * Every transaction requires a unique client-provided `idempotency_key`.
-  * The ledger transaction table enforces a `UNIQUE` database constraint on this key.
-  * If a request is retried, the database locks on the constraint, immediately detects the duplicate, retrieves the existing completed transaction, and safely returns it without executing new credits/debits.
+  * The system uses an **insert-first strategy inside the database transaction**, under a pessimistic wallet lock.
+  * We catch `QueryException` for unique constraint violations across MySQL, PostgreSQL, and SQLite, safely returning the existing transaction without executing new credits/debits. This eliminates race conditions entirely.
 
-### 5. Cross-Currency (FX) — Current Scope and Future Approach
+### 5. Strict State Machines & Financial Constraints
+* **State Machines**: `BankPayment` and `PayrollEvent` utilize rigorous state machines (e.g., `initiated` → `pending` → `success`/`failed`). Transitions are validated at the model level via `updating` hooks and custom exceptions (`InvalidStateTransitionException`), preventing illegal state jumps.
+* **Database CHECK Constraints**: Financial invariants are enforced at the database layer (MySQL/PostgreSQL `CHECK` constraints, SQLite triggers). These guarantee `balance >= 0`, `held_balance >= 0`, `held_balance <= balance`, and positive entry amounts, acting as the ultimate safety net.
+* **Immutability Hardening**: Custom Eloquent builders (`ImmutableBuilder`) prevent mass updates and deletes that would normally bypass model-level events.
+
+### 6. Cross-Currency (FX) — Current Scope and Future Approach
 * **Today**: Wallet transfers require identical `currency` on both wallets. A mismatch throws `DomainException` in `LedgerService::transfer()` — no silent conversion.
 * **If FX were required in production**:
   1. Store authoritative rates in an `fx_rates` table (`from_currency`, `to_currency`, `rate`, `effective_at`) with a unique constraint per pair and timestamp.
@@ -210,6 +215,7 @@ All primary keys use globally unique `UUID v4` to prevent ID enumeration attacks
 | 6 | **Terminal B:** `npm run dev` → Vite dev server (HMR) for the React dashboard |
 | 7 | **Terminal C:** `php artisan queue:work` — required for payroll webhooks and bank withdrawals |
 | 8 | **Terminal D (optional):** `php artisan schedule:work` — auto-reconciles stuck bank payments |
+| 8b| **Terminal E (optional):** `php artisan ledger:reconcile-balances` — reconciles cached wallet balances against the immutable ledger |
 | 9 | Visit `http://127.0.0.1:8000` for the operations dashboard, or import the Postman collection for raw API runs |
 
 For a production-style build (no dev server), run `npm run build` once — Laravel will serve the compiled assets from `public/build`.
@@ -315,21 +321,23 @@ Seeder output lists `employee_id`, `wallet_id`, and `external_reference` for Pos
 
 ## 🧪 Testing and Verification
 
-The codebase includes an automated test suite (75 tests) covering payroll hooks, bank flows, money movements, transaction history, immutability, reconciliation, and concurrency locking.
+The codebase includes an automated test suite (102 tests, 388 assertions) covering payroll hooks, bank flows, money movements, transaction history, immutability, reconciliation, state machines, and concurrency locking.
 
 To run the automated suite:
 ```bash
 php vendor/bin/phpunit
 ```
 
-### Concurrency Lock Proof Test
+### Concurrency & Reliability Validation
 We have created a dedicated, deterministic concurrency validation suite:
 ```bash
-php vendor/phpunit/phpunit/phpunit tests/Feature/ConcurrencyTest.php
+php artisan test --filter=FinancialConcurrencyTest
 ```
-This test asserts:
-1. That all mutations execute `lockForUpdate()` database instructions.
-2. That double-wallet operations sort primary keys before locking to mathematically protect the system against deadlocks.
+This suite asserts:
+1. **No Negative Balances**: Concurrent debits cannot overdraw a wallet.
+2. **Idempotency**: Duplicate requests under load yield a single effect.
+3. **Deadlock Prevention**: Double-wallet operations sort primary keys before locking.
+4. **Failure Recovery**: Failed outbound bank payments safely release held funds back to available balance.
 
 ---
 
